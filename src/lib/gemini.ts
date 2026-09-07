@@ -13,7 +13,25 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 // Fast, multimodal, current as of this build (verified against the live
 // ListModels endpoint, not just docs — Gemini's model line moves quickly).
-const MODEL = "gemini-3.8-flash";
+// A free-tier key gets lower scheduling priority than a paid one, so the
+// newest model occasionally comes back 503 "high demand" under load — tried
+// live during development. MODELS is an ordered fallback chain, and each is
+// retried with backoff before moving to the next, rather than failing the
+// whole request on one transient overload.
+const MODELS = ["gemini-3.8-flash", "gemini-2.5-flash"];
+const RETRYABLE_STATUS = new Set([429, 503]);
+// Kept low: each attempt while overloaded can itself take several seconds
+// (observed up to ~20s total for 2 attempts during testing), and this all
+// has to fit inside the route's maxDuration on Vercel.
+const RETRIES_PER_MODEL = 1;
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function statusOf(err: unknown): number | undefined {
+  return (err as { status?: number } | undefined)?.status;
+}
 
 const FoodPhotoItemSchema = z.object({
   name: z.string().describe("The food or drink item's name"),
@@ -52,29 +70,53 @@ before saving, never auto-saved, so it's fine to be approximate. If you can't \
 tell what something is, make your best guess and mark confidence "low" rather \
 than omitting it. Respond with JSON matching the given schema only.`;
 
+async function generateWithFallback(
+  base64Image: string,
+  mediaType: string,
+) {
+  let lastErr: unknown;
+
+  for (const model of MODELS) {
+    for (let attempt = 0; attempt <= RETRIES_PER_MODEL; attempt++) {
+      try {
+        return await ai.models.generateContent({
+          model,
+          contents: [
+            {
+              role: "user",
+              parts: [
+                { inlineData: { data: base64Image, mimeType: mediaType } },
+                {
+                  text: "Identify the food items in this photo and estimate their macros.",
+                },
+              ],
+            },
+          ],
+          config: {
+            systemInstruction: SYSTEM_PROMPT,
+            responseMimeType: "application/json",
+            responseJsonSchema: z.toJSONSchema(FoodPhotoAnalysisSchema),
+          },
+        });
+      } catch (err) {
+        lastErr = err;
+        const retryable = RETRYABLE_STATUS.has(statusOf(err) ?? 0);
+        if (!retryable) break; // not a transient-overload error — try the next model, don't waste retries
+        if (attempt < RETRIES_PER_MODEL) {
+          await sleep(500 * 2 ** attempt); // 500ms, then 1s
+        }
+      }
+    }
+  }
+
+  throw lastErr;
+}
+
 export async function analyzeFoodPhoto(
   base64Image: string,
   mediaType: "image/jpeg" | "image/png" | "image/webp",
 ): Promise<FoodPhotoAnalysis> {
-  const response = await ai.models.generateContent({
-    model: MODEL,
-    contents: [
-      {
-        role: "user",
-        parts: [
-          { inlineData: { data: base64Image, mimeType: mediaType } },
-          {
-            text: "Identify the food items in this photo and estimate their macros.",
-          },
-        ],
-      },
-    ],
-    config: {
-      systemInstruction: SYSTEM_PROMPT,
-      responseMimeType: "application/json",
-      responseJsonSchema: z.toJSONSchema(FoodPhotoAnalysisSchema),
-    },
-  });
+  const response = await generateWithFallback(base64Image, mediaType);
 
   const text = response.text;
   if (!text) {

@@ -6,9 +6,10 @@ const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const MAX_BYTES = 8 * 1024 * 1024; // 8MB
 
 // Vision + structured-output extraction can take longer than the platform
-// default (10s on Vercel). Raise this route's ceiling; actual cap still
-// depends on your Vercel plan.
-export const maxDuration = 30;
+// default (10s on Vercel), more so with the retry/fallback in src/lib/gemini.ts
+// (observed up to ~20s under real overload during testing). Raise this
+// route's ceiling; actual enforced cap still depends on your Vercel plan.
+export const maxDuration = 45;
 
 export async function POST(request: NextRequest) {
   // Spec 3.2: this is the costly operation the approval gate exists to
@@ -51,8 +52,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(analysis);
   } catch (err) {
     console.error("Photo analysis failed", err);
+    const status = (err as { status?: number } | undefined)?.status;
+    const overloaded = status === 429 || status === 503;
     return NextResponse.json(
-      { error: "Couldn't analyze that photo. Try again or log it manually." },
+      {
+        error: overloaded
+          ? "Gemini is under heavy load right now (common on the free tier). Wait a few seconds and try again, or log it manually."
+          : "Couldn't analyze that photo. Try again or log it manually.",
+      },
       { status: 502 },
     );
   }
