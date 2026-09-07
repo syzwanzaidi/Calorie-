@@ -7,7 +7,8 @@ for the full product spec this app is built from.
 
 Next.js (App Router) · Supabase (Postgres + Auth) · Drizzle ORM (schema/migrations
 only — see note below) · Tailwind CSS · Recharts · `@zxing/browser` (barcode) ·
-Open Food Facts API · Claude API (photo food recognition).
+Open Food Facts API · Gemini API (photo food recognition — swapped from the
+spec's Claude API for the free tier; see the note below).
 
 ## First-time setup
 
@@ -23,7 +24,8 @@ Open Food Facts API · Claude API (photo food recognition).
      Settings → API
    - `SUPABASE_SERVICE_ROLE_KEY` — Project Settings → API (**server-only,
      never commit**)
-   - `ANTHROPIC_API_KEY` — for photo food logging
+   - `GEMINI_API_KEY` — for photo food logging (get one free at
+     [aistudio.google.com/apikey](https://aistudio.google.com/apikey))
 4. **Install deps:** `npm install`
 5. **Create the schema:** `npm run db:push` (or `npm run db:generate` +
    apply the generated SQL, if you'd rather review migrations before
@@ -64,8 +66,8 @@ Open Food Facts API · Claude API (photo food recognition).
   (re-checked in every gated layout, Server Action, and Route Handler), and
   Postgres RLS (`supabase/02_rls.sql`). The photo-logging route
   (`src/app/api/log/photo/route.ts`) independently re-verifies approval
-  before calling Claude, since that's the costly operation the whole gate
-  exists to protect.
+  before calling Gemini — that's still the point of the gate even on a free
+  tier, since free-tier quota is a shared, finite resource too.
 - **Admin mutations** (`src/app/admin/actions.ts`) always check the
   *requester's* own admin status first via their session, then perform the
   actual write with the service-role client — never through a
@@ -77,9 +79,15 @@ Open Food Facts API · Claude API (photo food recognition).
   multipliers, ±20%/+15% for cut/bulk, protein set relative to bodyweight
   (2.0 g/kg cutting, 1.8 g/kg otherwise), fat at 28% of calories, carbs fill
   the remainder. Easy to retune if you want different numbers.
-- **Photo-log confidence indicator:** yes — each item Claude extracts from a
+- **Photo-log confidence indicator:** yes — each item Gemini extracts from a
   photo carries a low/medium/high confidence badge in the review UI
   (`src/components/PhotoLogger.tsx`).
+- **Photo-recognition provider:** the spec (Section 2/10) specifies the
+  Claude API. This build uses the Gemini API instead (`src/lib/gemini.ts`,
+  `gemini-3.8-flash`) at the user's explicit request, to use its free tier
+  rather than pay for Anthropic API credits. Swapping back means editing that
+  one file — `analyzeFoodPhoto()` has the same signature either way, so
+  `src/app/api/log/photo/route.ts` wouldn't need to change beyond the import.
 - **CSV export:** not in this build — flagged as a fast follow.
 - **Admin notification on new sign-up:** not in this build (periodic `/admin`
   checks only) — an email notification would need a transactional email

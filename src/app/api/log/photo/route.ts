@@ -1,9 +1,14 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSessionUser } from "@/lib/auth";
-import { analyzeFoodPhoto } from "@/lib/anthropic";
+import { analyzeFoodPhoto } from "@/lib/gemini";
 
 const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const MAX_BYTES = 8 * 1024 * 1024; // 8MB
+
+// Vision + structured-output extraction can take longer than the platform
+// default (10s on Vercel). Raise this route's ceiling; actual cap still
+// depends on your Vercel plan.
+export const maxDuration = 30;
 
 export async function POST(request: NextRequest) {
   // Spec 3.2: this is the costly operation the approval gate exists to

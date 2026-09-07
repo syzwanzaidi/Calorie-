@@ -12,7 +12,7 @@
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.124.0",
+    "@google/genai": "^2.21.0",
     "@supabase/ssr": "^0.12.6",
     "@supabase/supabase-js": "^2.115.0",
     "@zxing/browser": "^0.2.1",
