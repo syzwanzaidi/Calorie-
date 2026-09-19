@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { friendlyAuthError } from "@/lib/authErrors";
 
 export type AuthActionState = { error: string | null };
 
@@ -20,7 +21,7 @@ export async function signInAction(
   const { error } = await supabase.auth.signInWithPassword({ email, password });
 
   if (error) {
-    return { error: error.message };
+    return { error: friendlyAuthError(error) };
   }
 
   // src/proxy.ts routes the user to /pending, /denied, /admin, or /dashboard

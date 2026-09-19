@@ -1,15 +1,22 @@
 import { GoogleGenAI } from "@google/genai";
 import { z } from "zod";
+import { createAdminClient } from "@/lib/supabase/server";
+import {
+  listActiveGeminiKeys,
+  markGeminiKeyUsed,
+  markGeminiKeyError,
+  type GeminiApiKeyRow,
+} from "@/lib/data/apiKeys";
 
-// SERVER-ONLY. Never import this module from a Client Component — it reads
-// GEMINI_API_KEY and every caller must independently verify
-// status = 'approved' first (spec 3.2), since this is the operation the
-// approval gate exists to protect.
+// SERVER-ONLY. Never import this module from a Client Component — every
+// caller must independently verify status = 'approved' first (spec 3.2),
+// since this is the operation the approval gate exists to protect.
 //
 // Swapped from the Claude API to the Gemini API (free tier available) at
-// the user's request — see the photo-logging note in README.md.
-
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+// the user's request — see the photo-logging note in README.md. Keys are
+// managed at /admin (Settings → AI photo analysis), not a single env var —
+// see src/lib/data/apiKeys.ts for why, and the fallback chain below for how
+// hitting one key's quota moves on to the next automatically.
 
 // Fast, multimodal, current as of this build (verified against the live
 // ListModels endpoint, not just docs — Gemini's model line moves quickly).
@@ -22,7 +29,8 @@ const MODELS = ["gemini-3.8-flash", "gemini-2.5-flash"];
 const RETRYABLE_STATUS = new Set([429, 503]);
 // Kept low: each attempt while overloaded can itself take several seconds
 // (observed up to ~20s total for 2 attempts during testing), and this all
-// has to fit inside the route's maxDuration on Vercel.
+// has to fit inside the route's maxDuration on Vercel — and now it's
+// multiplied by however many keys are configured.
 const RETRIES_PER_MODEL = 1;
 
 function sleep(ms: number) {
@@ -31,6 +39,10 @@ function sleep(ms: number) {
 
 function statusOf(err: unknown): number | undefined {
   return (err as { status?: number } | undefined)?.status;
+}
+
+function messageOf(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 const FoodPhotoItemSchema = z.object({
@@ -70,10 +82,13 @@ before saving, never auto-saved, so it's fine to be approximate. If you can't \
 tell what something is, make your best guess and mark confidence "low" rather \
 than omitting it. Respond with JSON matching the given schema only.`;
 
-async function generateWithFallback(
+/** Tries every model in MODELS (with retry/backoff) against a single API key. */
+async function generateWithOneKey(
+  apiKey: string,
   base64Image: string,
   mediaType: string,
 ) {
+  const ai = new GoogleGenAI({ apiKey });
   let lastErr: unknown;
 
   for (const model of MODELS) {
@@ -101,10 +116,64 @@ async function generateWithFallback(
       } catch (err) {
         lastErr = err;
         const retryable = RETRYABLE_STATUS.has(statusOf(err) ?? 0);
-        if (!retryable) break; // not a transient-overload error — try the next model, don't waste retries
+        if (!retryable) break; // not transient — try the next model, don't waste retries
         if (attempt < RETRIES_PER_MODEL) {
           await sleep(500 * 2 ** attempt); // 500ms, then 1s
         }
+      }
+    }
+  }
+
+  throw lastErr;
+}
+
+/**
+ * Tries every configured API key in turn (oldest-added first), each against
+ * the full model/retry chain above. A key that's out of quota (or otherwise
+ * failing) is recorded (fire-and-forget — never blocks the request on a
+ * logging write) and the next key is tried, so one exhausted key degrades
+ * the app to "a bit slower" rather than "photo logging is down" as long as
+ * a spare key is configured at /admin.
+ */
+async function generateWithFallback(base64Image: string, mediaType: string) {
+  const adminClient = createAdminClient();
+  let keys: GeminiApiKeyRow[] = [];
+  try {
+    keys = await listActiveGeminiKeys(adminClient);
+  } catch {
+    // DB unreachable — fall through to the env var below rather than fail outright.
+  }
+
+  // Env var acts as a bootstrap/safety-net key, tried last, in case no keys
+  // are configured yet at /admin or the table is temporarily unreachable.
+  const envKey = process.env.GEMINI_API_KEY;
+  const candidates: { id: string | null; keyValue: string }[] = [
+    ...keys.map((k) => ({ id: k.id, keyValue: k.key_value })),
+    ...(envKey && !keys.some((k) => k.key_value === envKey)
+      ? [{ id: null, keyValue: envKey }]
+      : []),
+  ];
+
+  if (candidates.length === 0) {
+    throw new Error(
+      "No Gemini API key configured. Add one at /admin (Settings → AI photo analysis).",
+    );
+  }
+
+  let lastErr: unknown;
+  for (const candidate of candidates) {
+    try {
+      const response = await generateWithOneKey(
+        candidate.keyValue,
+        base64Image,
+        mediaType,
+      );
+      if (candidate.id) void markGeminiKeyUsed(adminClient, candidate.id);
+      return response;
+    } catch (err) {
+      lastErr = err;
+      if (candidate.id) {
+        void markGeminiKeyError(adminClient, candidate.id, messageOf(err));
       }
     }
   }

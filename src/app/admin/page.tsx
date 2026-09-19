@@ -1,11 +1,13 @@
 import { createAdminClient } from "@/lib/supabase/server";
 import { listAllProfiles, getUsageStats } from "@/lib/data/admin";
+import { listGeminiKeys } from "@/lib/data/apiKeys";
 import {
   approveUserAction,
   rejectUserAction,
   suspendUserAction,
   reinstateUserAction,
 } from "@/app/admin/actions";
+import { ApiKeysPanel } from "@/components/ApiKeysPanel";
 
 function StatusBadge({ status }: { status: string }) {
   const color =
@@ -26,9 +28,10 @@ function StatusBadge({ status }: { status: string }) {
 
 export default async function AdminPage() {
   const adminClient = createAdminClient();
-  const [profiles, usage] = await Promise.all([
+  const [profiles, usage, geminiKeys] = await Promise.all([
     listAllProfiles(adminClient),
     getUsageStats(adminClient),
+    listGeminiKeys(adminClient),
   ]);
 
   const pending = profiles.filter((p) => p.status === "pending");
@@ -55,7 +58,7 @@ export default async function AdminPage() {
                 <div className="min-w-0">
                   <p className="truncate">{p.display_name || "(no name)"}</p>
                   <p className="text-xs text-text-muted">
-                    Signed up {new Date(p.created_at).toLocaleDateString()}
+                    Signed up {new Date(p.created_at).toLocaleDateString("en-GB")}
                   </p>
                 </div>
                 <div className="flex gap-2 shrink-0">
@@ -111,7 +114,7 @@ export default async function AdminPage() {
                     </td>
                     <td className="px-4 py-3 text-text-muted">
                       {stats?.lastActiveAt
-                        ? new Date(stats.lastActiveAt).toLocaleDateString()
+                        ? new Date(stats.lastActiveAt).toLocaleDateString("en-GB")
                         : "—"}
                     </td>
                     <td className="px-4 py-3">
@@ -144,6 +147,11 @@ export default async function AdminPage() {
             </tbody>
           </table>
         </div>
+      </section>
+
+      <section>
+        <h2 className="text-lg mb-4">AI photo analysis</h2>
+        <ApiKeysPanel keys={geminiKeys} />
       </section>
     </div>
   );

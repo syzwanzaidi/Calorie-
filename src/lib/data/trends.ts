@@ -23,7 +23,7 @@ export function aggregateDailyTotals(
     const key = formatDateISO(date);
     buckets.set(key, {
       date: key,
-      label: date.toLocaleDateString(undefined, {
+      label: date.toLocaleDateString("en-GB", {
         weekday: "short",
         day: "numeric",
       }),
@@ -54,7 +54,7 @@ export function toWeightPoints(logs: WeightLogRow[]): WeightPoint[] {
     const date = new Date(log.logged_at);
     return {
       date: formatDateISO(date),
-      label: date.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+      label: date.toLocaleDateString("en-GB", { month: "short", day: "numeric" }),
       weightKg: log.weight_kg,
     };
   });

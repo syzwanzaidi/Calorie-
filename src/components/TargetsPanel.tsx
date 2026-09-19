@@ -23,7 +23,7 @@ export function TargetsPanel({ current }: { current: TargetRow | null }) {
   return (
     <div className="space-y-6">
       {current && (
-        <div className="grid grid-cols-4 gap-3 text-center border border-hairline rounded-md p-4">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center border border-hairline rounded-md p-4">
           <div>
             <p className="font-numeric text-lg">{current.calories}</p>
             <p className="text-xs text-text-muted">kcal</p>
@@ -46,9 +46,9 @@ export function TargetsPanel({ current }: { current: TargetRow | null }) {
             </p>
             <p className="text-xs text-text-muted">fat g</p>
           </div>
-          <p className="col-span-4 text-xs text-text-muted">
+          <p className="col-span-2 sm:col-span-4 text-xs text-text-muted">
             {current.source === "auto" ? "Auto-calculated" : "Manually set"} ·
-            effective {new Date(current.effective_from).toLocaleDateString()}
+            effective {new Date(current.effective_from).toLocaleDateString("en-GB")}
           </p>
         </div>
       )}
@@ -73,7 +73,7 @@ export function TargetsPanel({ current }: { current: TargetRow | null }) {
 
       <div>
         <h3 className="text-sm mb-2">Manual override</h3>
-        <form action={manualAction} className="grid grid-cols-4 gap-3">
+        <form action={manualAction} className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <input
             name="calories"
             type="number"
@@ -107,14 +107,14 @@ export function TargetsPanel({ current }: { current: TargetRow | null }) {
             className="rounded-md border border-hairline bg-surface px-2 py-2 text-sm"
           />
           {manualState.error && (
-            <p className="col-span-4 text-sm text-protein" role="alert">
+            <p className="col-span-2 sm:col-span-4 text-sm text-protein" role="alert">
               {manualState.error}
             </p>
           )}
           <button
             type="submit"
             disabled={manualPending}
-            className="col-span-4 rounded-md bg-accent px-4 py-2 text-sm font-medium text-black disabled:opacity-60"
+            className="col-span-2 sm:col-span-4 rounded-md bg-accent px-4 py-2 text-sm font-medium text-black disabled:opacity-60"
           >
             {manualPending ? "Saving…" : "Set manual targets"}
           </button>

@@ -5,6 +5,7 @@ import {
   integer,
   real,
   timestamp,
+  boolean,
   pgEnum,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
@@ -97,6 +98,24 @@ export const weightLogs = pgTable("weight_logs", {
   loggedAt: timestamp("logged_at", { withTimezone: true }).defaultNow(),
 });
 
+// Server-only secret store for the AI photo-analysis provider (currently
+// Gemini). RLS is enabled with zero policies (see supabase/03_gemini_keys.sql)
+// — not even an admin's own session can read/write this table; only the
+// service-role client can, which is why every access goes through
+// src/lib/data/apiKeys.ts using createAdminClient(), never the request-scoped
+// client. Multiple active keys let the app fail over automatically when one
+// hits its quota (src/lib/gemini.ts).
+export const geminiApiKeys = pgTable("gemini_api_keys", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  label: text("label"),
+  keyValue: text("key_value").notNull(),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+  lastErrorAt: timestamp("last_error_at", { withTimezone: true }),
+  lastError: text("last_error"),
+});
+
 export const profilesRelations = relations(profiles, ({ many }) => ({
   targets: many(targets),
   foodEntries: many(foodEntries),
@@ -131,3 +150,5 @@ export type FoodEntry = typeof foodEntries.$inferSelect;
 export type NewFoodEntry = typeof foodEntries.$inferInsert;
 export type WeightLog = typeof weightLogs.$inferSelect;
 export type NewWeightLog = typeof weightLogs.$inferInsert;
+export type GeminiApiKey = typeof geminiApiKeys.$inferSelect;
+export type NewGeminiApiKey = typeof geminiApiKeys.$inferInsert;

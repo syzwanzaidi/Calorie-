@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { friendlyAuthError } from "@/lib/authErrors";
 
 export type AuthActionState = { error: string | null };
 
@@ -28,7 +29,7 @@ export async function signUpAction(
   });
 
   if (error) {
-    return { error: error.message };
+    return { error: friendlyAuthError(error) };
   }
 
   // Email confirmation is disabled (spec 3.1), so this signs the user in

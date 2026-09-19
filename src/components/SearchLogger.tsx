@@ -4,11 +4,13 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { logFoodAction } from "@/app/(app)/log/actions";
 import { scaleToQuantity, type OFFProduct } from "@/lib/openfoodfacts";
 import type { MealType } from "@/lib/supabase/types";
+import { EntryForm } from "@/components/EntryForm";
 
 export function SearchLogger({ initialProduct }: { initialProduct?: OFFProduct }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<OFFProduct[]>([]);
   const [searching, setSearching] = useState(false);
+  const [manual, setManual] = useState(false);
   const [selected, setSelected] = useState<OFFProduct | null>(
     initialProduct ?? null,
   );
@@ -165,6 +167,35 @@ export function SearchLogger({ initialProduct }: { initialProduct?: OFFProduct }
     );
   }
 
+  if (manual) {
+    return (
+      <div className="space-y-4">
+        <button
+          type="button"
+          onClick={() => setManual(false)}
+          className="text-sm text-text-muted hover:text-text"
+        >
+          ← Back to search
+        </button>
+        <EntryForm
+          action={logFoodAction}
+          submitLabel="Log it"
+          initial={{
+            name: query,
+            quantity: 1,
+            unit: "",
+            calories: 0,
+            proteinG: 0,
+            carbsG: 0,
+            fatG: 0,
+            mealType: "snack",
+            source: "manual",
+          }}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <input
@@ -175,6 +206,19 @@ export function SearchLogger({ initialProduct }: { initialProduct?: OFFProduct }
         autoFocus
         className="w-full rounded-md border border-hairline bg-surface px-3 py-2 outline-none focus:border-accent"
       />
+
+      <p className="text-sm text-text-muted">
+        Cooked dishes (nasi lemak, roti canai from a stall…) won&apos;t show up
+        here — Open Food Facts only covers packaged products with a barcode.{" "}
+        <button
+          type="button"
+          onClick={() => setManual(true)}
+          className="text-accent underline"
+        >
+          Log it manually
+        </button>{" "}
+        instead, or try the photo scanner.
+      </p>
 
       {searching && <p className="text-sm text-text-muted">Searching…</p>}
 

@@ -107,6 +107,23 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["weight_logs"]["Row"]>;
         Relationships: [];
       };
+      gemini_api_keys: {
+        Row: {
+          id: string;
+          label: string | null;
+          key_value: string;
+          is_active: boolean;
+          created_at: string;
+          last_used_at: string | null;
+          last_error_at: string | null;
+          last_error: string | null;
+        };
+        Insert: Partial<Database["public"]["Tables"]["gemini_api_keys"]["Row"]> & {
+          key_value: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["gemini_api_keys"]["Row"]>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;
