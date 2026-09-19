@@ -46,6 +46,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const analysis = await analyzeFoodPhoto(
+      user.id,
       base64,
       file.type as "image/jpeg" | "image/png" | "image/webp",
     );

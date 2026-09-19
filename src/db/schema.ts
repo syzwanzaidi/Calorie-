@@ -98,15 +98,18 @@ export const weightLogs = pgTable("weight_logs", {
   loggedAt: timestamp("logged_at", { withTimezone: true }).defaultNow(),
 });
 
-// Server-only secret store for the AI photo-analysis provider (currently
-// Gemini). RLS is enabled with zero policies (see supabase/03_gemini_keys.sql)
-// — not even an admin's own session can read/write this table; only the
-// service-role client can, which is why every access goes through
-// src/lib/data/apiKeys.ts using createAdminClient(), never the request-scoped
-// client. Multiple active keys let the app fail over automatically when one
-// hits its quota (src/lib/gemini.ts).
+// Per-user secret store for the AI photo-analysis provider (currently
+// Gemini) — each user brings their own key(s), so one user's usage never
+// eats into another's free-tier quota. RLS lets a user manage only their
+// own rows (supabase/03_gemini_keys.sql), same pattern as targets/
+// food_entries/weight_logs. A user's own active keys are tried first
+// (oldest first); admin-owned keys are the fallback for a user with none of
+// their own configured yet (src/lib/gemini.ts).
 export const geminiApiKeys = pgTable("gemini_api_keys", {
   id: uuid("id").defaultRandom().primaryKey(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => profiles.id, { onDelete: "cascade" }),
   label: text("label"),
   keyValue: text("key_value").notNull(),
   isActive: boolean("is_active").notNull().default(true),

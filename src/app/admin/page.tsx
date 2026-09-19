@@ -1,13 +1,11 @@
 import { createAdminClient } from "@/lib/supabase/server";
 import { listAllProfiles, getUsageStats } from "@/lib/data/admin";
-import { listGeminiKeys } from "@/lib/data/apiKeys";
 import {
   approveUserAction,
   rejectUserAction,
   suspendUserAction,
   reinstateUserAction,
 } from "@/app/admin/actions";
-import { ApiKeysPanel } from "@/components/ApiKeysPanel";
 
 function StatusBadge({ status }: { status: string }) {
   const color =
@@ -28,10 +26,9 @@ function StatusBadge({ status }: { status: string }) {
 
 export default async function AdminPage() {
   const adminClient = createAdminClient();
-  const [profiles, usage, geminiKeys] = await Promise.all([
+  const [profiles, usage] = await Promise.all([
     listAllProfiles(adminClient),
     getUsageStats(adminClient),
-    listGeminiKeys(adminClient),
   ]);
 
   const pending = profiles.filter((p) => p.status === "pending");
@@ -147,11 +144,6 @@ export default async function AdminPage() {
             </tbody>
           </table>
         </div>
-      </section>
-
-      <section>
-        <h2 className="text-lg mb-4">AI photo analysis</h2>
-        <ApiKeysPanel keys={geminiKeys} />
       </section>
     </div>
   );

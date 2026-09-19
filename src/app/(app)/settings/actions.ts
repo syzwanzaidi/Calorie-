@@ -7,6 +7,11 @@ import { setTargets } from "@/lib/data/targets";
 import { addWeightLog, getLatestWeight } from "@/lib/data/weight";
 import { calculateTargets, ageFromBirthYear } from "@/lib/tdee";
 import type { ActivityLevel, Goal } from "@/lib/supabase/types";
+import {
+  addMyGeminiKey,
+  setGeminiKeyActive,
+  deleteGeminiKey,
+} from "@/lib/data/apiKeys";
 
 export type SettingsActionState = { error: string | null; ok?: boolean };
 
@@ -129,4 +134,48 @@ export async function addWeightAction(
   revalidatePath("/settings");
   revalidatePath("/trends");
   return { error: null, ok: true };
+}
+
+export type ApiKeyActionState = { error: string | null; ok?: boolean };
+
+export async function addGeminiKeyAction(
+  _prevState: ApiKeyActionState,
+  formData: FormData,
+): Promise<ApiKeyActionState> {
+  const user = await requireApproved();
+  const supabase = await createClient();
+
+  const keyValue = String(formData.get("keyValue") ?? "").trim();
+  const label = String(formData.get("label") ?? "").trim() || null;
+
+  if (!keyValue) {
+    return { error: "Paste a key value first." };
+  }
+
+  try {
+    // Request-scoped client — RLS (auth.uid() = user_id) is what actually
+    // ties this key to the caller, not just the user.id passed here.
+    await addMyGeminiKey(supabase, user.id, label, keyValue);
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Failed to add key." };
+  }
+
+  revalidatePath("/settings");
+  return { error: null, ok: true };
+}
+
+export async function toggleGeminiKeyAction(id: string, isActive: boolean) {
+  await requireApproved();
+  const supabase = await createClient();
+  // RLS scopes this update to rows the caller owns — passing a stranger's
+  // key id here just matches zero rows, not someone else's key.
+  await setGeminiKeyActive(supabase, id, isActive);
+  revalidatePath("/settings");
+}
+
+export async function deleteGeminiKeyAction(id: string) {
+  await requireApproved();
+  const supabase = await createClient();
+  await deleteGeminiKey(supabase, id);
+  revalidatePath("/settings");
 }

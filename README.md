@@ -24,8 +24,10 @@ spec's Claude API for the free tier; see the note below).
      Settings → API
    - `SUPABASE_SERVICE_ROLE_KEY` — Project Settings → API (**server-only,
      never commit**)
-   - `GEMINI_API_KEY` — for photo food logging (get one free at
-     [aistudio.google.com/apikey](https://aistudio.google.com/apikey))
+   - `GEMINI_API_KEY` — bootstrap/fallback key for photo food logging (get
+     one free at [aistudio.google.com/apikey](https://aistudio.google.com/apikey)).
+     Once the app is running, each user can add their own key at
+     Settings → AI photo analysis instead — see the note below.
 4. **Install deps:** `npm install`
 5. **Create the schema:** `npm run db:push` (or `npm run db:generate` +
    apply the generated SQL, if you'd rather review migrations before
@@ -72,6 +74,28 @@ spec's Claude API for the free tier; see the note below).
   *requester's* own admin status first via their session, then perform the
   actual write with the service-role client — never through a
   client-writable RLS policy, per spec 3.4.
+- **Gemini keys are per-user, not a single shared secret.** `gemini_api_keys`
+  (`supabase/03_gemini_keys.sql`) has a normal RLS policy — `auth.uid() =
+  user_id` — same pattern as `targets`/`food_entries`/`weight_logs`, managed
+  at Settings → AI photo analysis by every approved user for themselves (not
+  admin-gated; there's nothing secret about *which* key is yours to see).
+  `analyzeFoodPhoto()` (`src/lib/gemini.ts`) tries the calling user's own
+  active keys first, then an admin's as a fallback for someone who hasn't
+  added their own yet, then `GEMINI_API_KEY` as a last resort — so usage
+  scales with the number of users instead of one key's free-tier quota being
+  shared by everyone. Resolving the fallback tier requires the service-role
+  client (a user's own RLS-scoped session can't see another user's key row),
+  so that lookup lives server-side in `src/lib/data/apiKeys.ts` and is never
+  exposed through a Server Action.
+- **The Gemini SDK retries 429/5xx internally by default** — up to 5
+  attempts, backoff up to 60s, completely invisible to the caller. Stacked
+  under this app's own model/key fallback, that turned one real test into a
+  131-second call before finally succeeding (measured live during
+  development). Every call in `src/lib/gemini.ts` now disables that
+  (`retryOptions: { attempts: 1 }`) and sets an explicit per-request timeout
+  instead, plus a wall-clock deadline across the whole key/model fallback
+  chain — worth knowing if you ever add another provider here, since the
+  same footgun likely exists in other SDKs too.
 
 ## Open questions from the spec, as resolved in this build
 
@@ -85,9 +109,9 @@ spec's Claude API for the free tier; see the note below).
 - **Photo-recognition provider:** the spec (Section 2/10) specifies the
   Claude API. This build uses the Gemini API instead (`src/lib/gemini.ts`,
   `gemini-3.8-flash`) at the user's explicit request, to use its free tier
-  rather than pay for Anthropic API credits. Swapping back means editing that
-  one file — `analyzeFoodPhoto()` has the same signature either way, so
-  `src/app/api/log/photo/route.ts` wouldn't need to change beyond the import.
+  rather than pay for Anthropic API credits — and per-user keys (see above)
+  rather than one shared key, so usage isn't bottlenecked on a single
+  account's quota as more users sign up.
 - **CSV export:** not in this build — flagged as a fast follow.
 - **Admin notification on new sign-up:** not in this build (periodic `/admin`
   checks only) — an email notification would need a transactional email

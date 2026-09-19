@@ -6,7 +6,7 @@ import {
   toggleGeminiKeyAction,
   deleteGeminiKeyAction,
   type ApiKeyActionState,
-} from "@/app/admin/actions";
+} from "@/app/(app)/settings/actions";
 import type { GeminiApiKeyRow } from "@/lib/data/apiKeys";
 
 const initialState: ApiKeyActionState = { error: null };
@@ -25,14 +25,25 @@ export function ApiKeysPanel({ keys }: { keys: GeminiApiKeyRow[] }) {
   return (
     <div className="space-y-4">
       <p className="text-sm text-text-muted">
-        Used for photo food-recognition. When the active key at the top hits
-        its rate limit or quota, the app automatically falls back to the next
-        one — add a spare here instead of waiting for a limit to reset.
+        Your own Gemini API key for photo food-recognition, free to get at{" "}
+        <a
+          href="https://aistudio.google.com/apikey"
+          target="_blank"
+          rel="noreferrer"
+          className="text-accent underline"
+        >
+          aistudio.google.com/apikey
+        </a>
+        . Bringing your own means your usage never competes with anyone
+        else&apos;s free-tier limit. Add a second one here as a spare — if the
+        first hits its limit, the app automatically falls back to the next.
       </p>
 
       {keys.length === 0 ? (
         <p className="text-sm text-text-muted border border-hairline rounded-md px-4 py-3">
-          No keys configured — photo logging will fail until one is added.
+          No key of your own yet — photo logging will use a shared fallback
+          key if one is available, which may hit its limit faster since
+          other users share it too.
         </p>
       ) : (
         <ul className="divide-y divide-hairline border border-hairline rounded-md">

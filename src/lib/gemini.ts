@@ -2,7 +2,8 @@ import { GoogleGenAI } from "@google/genai";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/server";
 import {
-  listActiveGeminiKeys,
+  listActiveKeysForUser,
+  listAdminFallbackKeys,
   markGeminiKeyUsed,
   markGeminiKeyError,
   type GeminiApiKeyRow,
@@ -14,28 +15,34 @@ import {
 //
 // Swapped from the Claude API to the Gemini API (free tier available) at
 // the user's request — see the photo-logging note in README.md. Keys are
-// managed at /admin (Settings → AI photo analysis), not a single env var —
-// see src/lib/data/apiKeys.ts for why, and the fallback chain below for how
-// hitting one key's quota moves on to the next automatically.
+// per-user, managed at Settings → AI photo analysis, not a single env var —
+// each user brings their own so one person's usage can't eat into another's
+// free-tier quota (see src/lib/data/apiKeys.ts). Resolution order per call:
+// the calling user's own active keys, then an admin's as a fallback for
+// someone who hasn't added their own yet, then GEMINI_API_KEY as a last
+// resort. Within each key, the model/retry chain below still applies.
 
 // Fast, multimodal, current as of this build (verified against the live
 // ListModels endpoint, not just docs — Gemini's model line moves quickly).
 // A free-tier key gets lower scheduling priority than a paid one, so the
-// newest model occasionally comes back 503 "high demand" under load — tried
-// live during development. MODELS is an ordered fallback chain, and each is
-// retried with backoff before moving to the next, rather than failing the
-// whole request on one transient overload.
+// newest model occasionally comes back 429/503 under load — tried live
+// during development. MODELS is an ordered fallback chain tried per key.
 const MODELS = ["gemini-3.8-flash", "gemini-2.5-flash"];
 const RETRYABLE_STATUS = new Set([429, 503]);
-// Kept low: each attempt while overloaded can itself take several seconds
-// (observed up to ~20s total for 2 attempts during testing), and this all
-// has to fit inside the route's maxDuration on Vercel — and now it's
-// multiplied by however many keys are configured.
-const RETRIES_PER_MODEL = 1;
 
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+// The @google/genai SDK retries 429/5xx internally BY DEFAULT — up to 5
+// attempts with backoff up to 60s — completely invisible to the caller.
+// Stacked under this module's own model/key fallback, that turned one real
+// test into a 131-SECOND call (measured live) before finally succeeding,
+// which would blow well past any Vercel function timeout. Every call below
+// disables that (`retryOptions: { attempts: 1 }`) and sets an explicit
+// per-request ceiling instead, so *this* module is the only thing retrying.
+const PER_CALL_TIMEOUT_MS = 12_000;
+// Soft wall-clock budget for the whole operation (all keys, all models),
+// leaving margin under the route's maxDuration (45s) — see
+// src/app/api/log/photo/route.ts. Checked before each individual attempt so
+// it holds regardless of how many keys a user has configured.
+const TOTAL_DEADLINE_MS = 38_000;
 
 function statusOf(err: unknown): number | undefined {
   return (err as { status?: number } | undefined)?.status;
@@ -82,45 +89,52 @@ before saving, never auto-saved, so it's fine to be approximate. If you can't \
 tell what something is, make your best guess and mark confidence "low" rather \
 than omitting it. Respond with JSON matching the given schema only.`;
 
-/** Tries every model in MODELS (with retry/backoff) against a single API key. */
+/**
+ * Tries every model in MODELS against a single API key, each attempt capped
+ * at PER_CALL_TIMEOUT_MS with the SDK's own retrying disabled (see the note
+ * above `PER_CALL_TIMEOUT_MS`). Stops early — without making a doomed
+ * request — once `deadline` has passed.
+ */
 async function generateWithOneKey(
   apiKey: string,
   base64Image: string,
   mediaType: string,
+  deadline: number,
 ) {
   const ai = new GoogleGenAI({ apiKey });
   let lastErr: unknown;
 
   for (const model of MODELS) {
-    for (let attempt = 0; attempt <= RETRIES_PER_MODEL; attempt++) {
-      try {
-        return await ai.models.generateContent({
-          model,
-          contents: [
-            {
-              role: "user",
-              parts: [
-                { inlineData: { data: base64Image, mimeType: mediaType } },
-                {
-                  text: "Identify the food items in this photo and estimate their macros.",
-                },
-              ],
-            },
-          ],
-          config: {
-            systemInstruction: SYSTEM_PROMPT,
-            responseMimeType: "application/json",
-            responseJsonSchema: z.toJSONSchema(FoodPhotoAnalysisSchema),
+    if (Date.now() >= deadline) {
+      throw lastErr ?? new Error("Timed out before this key could be tried.");
+    }
+    try {
+      return await ai.models.generateContent({
+        model,
+        contents: [
+          {
+            role: "user",
+            parts: [
+              { inlineData: { data: base64Image, mimeType: mediaType } },
+              {
+                text: "Identify the food items in this photo and estimate their macros.",
+              },
+            ],
           },
-        });
-      } catch (err) {
-        lastErr = err;
-        const retryable = RETRYABLE_STATUS.has(statusOf(err) ?? 0);
-        if (!retryable) break; // not transient — try the next model, don't waste retries
-        if (attempt < RETRIES_PER_MODEL) {
-          await sleep(500 * 2 ** attempt); // 500ms, then 1s
-        }
-      }
+        ],
+        config: {
+          systemInstruction: SYSTEM_PROMPT,
+          responseMimeType: "application/json",
+          responseJsonSchema: z.toJSONSchema(FoodPhotoAnalysisSchema),
+          httpOptions: {
+            timeout: PER_CALL_TIMEOUT_MS,
+            retryOptions: { attempts: 1 }, // 1 = no SDK-internal retry
+          },
+        },
+      });
+    } catch (err) {
+      lastErr = err;
+      if (!RETRYABLE_STATUS.has(statusOf(err) ?? 0)) break; // not transient — no point trying the next model either
     }
   }
 
@@ -128,45 +142,57 @@ async function generateWithOneKey(
 }
 
 /**
- * Tries every configured API key in turn (oldest-added first), each against
- * the full model/retry chain above. A key that's out of quota (or otherwise
- * failing) is recorded (fire-and-forget — never blocks the request on a
- * logging write) and the next key is tried, so one exhausted key degrades
- * the app to "a bit slower" rather than "photo logging is down" as long as
- * a spare key is configured at /admin.
+ * Tries the calling user's own active keys first (oldest-added first), then
+ * falls back to an admin's keys, then GEMINI_API_KEY, each against the full
+ * model/retry chain above. A key that fails is recorded (fire-and-forget —
+ * never blocks the request on a logging write) and the next candidate is
+ * tried, so one exhausted key degrades the app to "a bit slower" rather
+ * than "photo logging is down," as long as some key somewhere still works.
  */
-async function generateWithFallback(base64Image: string, mediaType: string) {
+async function generateWithFallback(
+  userId: string,
+  base64Image: string,
+  mediaType: string,
+) {
   const adminClient = createAdminClient();
-  let keys: GeminiApiKeyRow[] = [];
+  let ownKeys: GeminiApiKeyRow[] = [];
+  let fallbackKeys: GeminiApiKeyRow[] = [];
   try {
-    keys = await listActiveGeminiKeys(adminClient);
+    [ownKeys, fallbackKeys] = await Promise.all([
+      listActiveKeysForUser(adminClient, userId),
+      listAdminFallbackKeys(adminClient, userId),
+    ]);
   } catch {
     // DB unreachable — fall through to the env var below rather than fail outright.
   }
 
   // Env var acts as a bootstrap/safety-net key, tried last, in case no keys
-  // are configured yet at /admin or the table is temporarily unreachable.
+  // are configured yet or the table is temporarily unreachable.
   const envKey = process.env.GEMINI_API_KEY;
+  const allDbKeys = [...ownKeys, ...fallbackKeys];
   const candidates: { id: string | null; keyValue: string }[] = [
-    ...keys.map((k) => ({ id: k.id, keyValue: k.key_value })),
-    ...(envKey && !keys.some((k) => k.key_value === envKey)
+    ...allDbKeys.map((k) => ({ id: k.id, keyValue: k.key_value })),
+    ...(envKey && !allDbKeys.some((k) => k.key_value === envKey)
       ? [{ id: null, keyValue: envKey }]
       : []),
   ];
 
   if (candidates.length === 0) {
     throw new Error(
-      "No Gemini API key configured. Add one at /admin (Settings → AI photo analysis).",
+      "No Gemini API key configured. Add one at Settings → AI photo analysis.",
     );
   }
 
+  const deadline = Date.now() + TOTAL_DEADLINE_MS;
   let lastErr: unknown;
   for (const candidate of candidates) {
+    if (Date.now() >= deadline) break; // out of time — stop before another doomed attempt
     try {
       const response = await generateWithOneKey(
         candidate.keyValue,
         base64Image,
         mediaType,
+        deadline,
       );
       if (candidate.id) void markGeminiKeyUsed(adminClient, candidate.id);
       return response;
@@ -182,10 +208,11 @@ async function generateWithFallback(base64Image: string, mediaType: string) {
 }
 
 export async function analyzeFoodPhoto(
+  userId: string,
   base64Image: string,
   mediaType: "image/jpeg" | "image/png" | "image/webp",
 ): Promise<FoodPhotoAnalysis> {
-  const response = await generateWithFallback(base64Image, mediaType);
+  const response = await generateWithFallback(userId, base64Image, mediaType);
 
   const text = response.text;
   if (!text) {

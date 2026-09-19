@@ -110,6 +110,7 @@ export type Database = {
       gemini_api_keys: {
         Row: {
           id: string;
+          user_id: string;
           label: string | null;
           key_value: string;
           is_active: boolean;
@@ -119,6 +120,7 @@ export type Database = {
           last_error: string | null;
         };
         Insert: Partial<Database["public"]["Tables"]["gemini_api_keys"]["Row"]> & {
+          user_id: string;
           key_value: string;
         };
         Update: Partial<Database["public"]["Tables"]["gemini_api_keys"]["Row"]>;
