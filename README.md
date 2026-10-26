@@ -1,14 +1,48 @@
 # Calorie+
 
-Calorie and macro tracker for gym-goers. See [CALORIE_PLUS_SPEC.md](./CALORIE_PLUS_SPEC.md)
-for the full product spec this app is built from.
+A calorie and macro tracker for gym-goers. Log food three ways (search, barcode scan, or a photo analysed by AI), set calorie and macro targets from your own stats, and watch your progress over time. New accounts are approved by an admin before they can use the app.
+
+See [CALORIE_PLUS_SPEC.md](./CALORIE_PLUS_SPEC.md) for the full product spec this app is built from.
+
+## Features
+
+**Food logging, three ways, one unified log**
+- **Search:** look up foods in the Open Food Facts database and adjust the portion
+- **Barcode scan:** use the device camera to scan a product and pull its nutrition data
+- **AI photo:** take a photo of a meal and Gemini returns an editable draft with each item's estimated macros and a low/medium/high confidence badge. Nothing is saved until you confirm
+- Edit or delete any entry, and re-log recent foods in one tap
+
+**Targets**
+- Calculated from height, weight, age, sex, activity level and goal (cut, maintain or bulk) with the Mifflin-St Jeor formula, or set manually
+- Every change is stored as a new row, so target history is kept
+
+**Progress**
+- Daily dashboard showing logged vs. target for calories and macros, and the budget remaining
+- Trend charts for calories and macros over the last 14 days
+- Weight log with a 90-day trend line
+
+**Access control**
+- Email and password sign-up with no email step
+- Every new account starts as `pending` until an admin approves it at `/admin`
+- Approval is enforced in three layers: route-level proxy, server-side checks in every gated layout, action and route handler, and Postgres Row Level Security
+- Each user can add their own Gemini API key in Settings, so AI photo usage is not limited by one shared quota
+
+## Screens
+
+| Route | Access | Purpose |
+|---|---|---|
+| `/signup`, `/login` | public | Create an account and sign in |
+| `/pending` | signed in, awaiting approval | Waiting-for-approval message |
+| `/denied` | signed in, rejected or suspended | Access denied message |
+| `/dashboard` | approved | Daily log, macro meters, quick logging |
+| `/log/search`, `/log/scan`, `/log/photo` | approved | The three logging flows |
+| `/trends` | approved | Calorie, macro and weight charts |
+| `/settings` | approved | Profile, targets and Gemini keys |
+| `/admin` | admin | Approve sign-ups and manage users |
 
 ## Stack
 
-Next.js (App Router) · Supabase (Postgres + Auth) · Drizzle ORM (schema/migrations
-only — see note below) · Tailwind CSS · Recharts · `@zxing/browser` (barcode) ·
-Open Food Facts API · Gemini API (photo food recognition — swapped from the
-spec's Claude API for the free tier; see the note below).
+Next.js (App Router) and React, Supabase (Postgres and Auth), Drizzle ORM (schema and migrations only, see the architecture notes below), Tailwind CSS, Recharts, `@zxing/browser` for barcode scanning, the Open Food Facts API, and the Gemini API for photo food recognition. Designed to be hosted on Vercel.
 
 ## First-time setup
 
@@ -16,7 +50,7 @@ spec's Claude API for the free tier; see the note below).
 2. **Disable email confirmation:** Supabase dashboard → Authentication → Providers
    → Email → turn off "Confirm email". Sign-up must work with no email step
    (spec 3.1).
-3. **Copy env vars.** Copy `.env.local.example` to `.env.local` and fill in:
+3. **Create `.env.local`** in the project root (env files are git-ignored, so there is no example file in the repo) with:
    - `DATABASE_URL` — Supabase pooled connection string (port 6543)
    - `DIRECT_URL` — Supabase direct connection string (port 5432), used only
      by drizzle-kit
@@ -40,6 +74,8 @@ spec's Claude API for the free tier; see the note below).
    - `supabase/02_rls.sql` — Row Level Security policies (the spec's
      Section 5 SQL, plus a column-lock trigger — see the comment at the top
      of that file for why)
+   - `supabase/03_gemini_keys.sql` — the `gemini_api_keys` table (with RLS)
+     used for per-user Gemini keys in Settings
 7. **Sign up** once through the running app, then in the Supabase Table
    Editor set your own `profiles.role = 'admin'` and `profiles.status =
    'approved'` — there's no self-service way to become admin, by design
